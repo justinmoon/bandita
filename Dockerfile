@@ -12,7 +12,9 @@ RUN go mod download
 COPY . .
 
 # Build the DVM server
-RUN go build -o dvm ./cmd/dvm && chmod +x dvm
+RUN go build -o dvm ./cmd/dvm && \
+    chmod 755 dvm && \
+    ls -la dvm
 
-# Run
-CMD ["./dvm"]
+# Switch to an explicit shell to run the command
+CMD ["/bin/sh", "-c", "./dvm"]
