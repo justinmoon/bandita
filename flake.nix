@@ -17,6 +17,7 @@
             go
             go-tools
             gopls
+            railway
           ];
         };
       });
