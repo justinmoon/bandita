@@ -15,6 +15,8 @@
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
             go
+            go-tools
+            gopls
           ];
         };
       });
