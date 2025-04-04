@@ -8,3 +8,6 @@ result-*
 
 # go
 bin
+
+# configuration
+.env

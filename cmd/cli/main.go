@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"bandita/dvm"
+	"github.com/joho/godotenv"
 )
 
 func extractTweetID(tweetURL string) (string, error) {
@@ -40,6 +41,11 @@ func extractTweetID(tweetURL string) (string, error) {
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	
+	// Load .env file if it exists
+	if err := godotenv.Load(); err != nil {
+		log.Printf("Warning: No .env file found or error loading it: %v", err)
+	}
 
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: cli <tweet-url>")
@@ -67,17 +73,12 @@ func main() {
 		log.Printf("Using relay from command line: %s", relayURL)
 	}
 
-	// Default DVM pubkey - In a real app, you'd want to get this from config
-	// This is a placeholder - replace with your actual DVM pubkey
-	dvmPubKey := "b12f6b94f0bb1b79c2aa6535a009f0d109a4228924976e3e79ef8e83ee09ecf7" // Add your DVM's pubkey here
+	// Get DVM pubkey from environment
+	dvmPubKey := os.Getenv("DVM_PUBKEY")
 	if dvmPubKey == "" {
-		// Create a temporary DVM just to get its pubkey
-		tempDvm, err := dvm.NewDvm(relayURL)
-		if err != nil {
-			log.Fatalf("Failed to create temporary DVM: %v", err)
-		}
-		dvmPubKey = tempDvm.GetPublicKey()
+		log.Fatalf("DVM_PUBKEY environment variable not set. Please set it to connect to a specific DVM instance.")
 	}
+	log.Printf("Using DVM pubkey: %s", dvmPubKey)
 
 	client, err := dvm.NewDvmClient(relayURL)
 	if err != nil {

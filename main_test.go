@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"log"
 	"sync"
@@ -11,10 +13,25 @@ import (
 	"bandita/dvm"
 )
 
+// generateTestPrivateKey creates a random private key for testing
+func generateTestPrivateKey() (string, error) {
+	sk := make([]byte, 32)
+	if _, err := rand.Read(sk); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(sk), nil
+}
+
 func TestTweetDvm(t *testing.T) {
 	relayURL := "wss://relay.nostr.net"
 
-	dvmInstance, err := dvm.NewDvm(relayURL)
+	// Generate a temporary private key for testing
+	sk, err := generateTestPrivateKey()
+	if err != nil {
+		t.Fatalf("failed to generate test private key: %v", err)
+	}
+	
+	dvmInstance, err := dvm.NewDvm(relayURL, sk)
 	if err != nil {
 		t.Fatalf("failed to create dvm: %v", err)
 	}

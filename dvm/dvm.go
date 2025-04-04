@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -38,12 +39,21 @@ func (d *Dvm) GetPublicKey() string {
 }
 
 // NewDvm creates a new DVM instance connected to the specified relay.
-func NewDvm(relayURL string) (*Dvm, error) {
-	sk, err := generatePrivateKey()
-	if err != nil {
-		return nil, err
+// Private key must be provided as a 64-character hex string.
+func NewDvm(relayURL string, privateKey string) (*Dvm, error) {
+	if privateKey == "" {
+		return nil, fmt.Errorf("private key is required")
 	}
-	pk, _ := nostr.GetPublicKey(sk)
+	
+	// Validate private key format (should be 64 hex chars)
+	if len(privateKey) != 64 {
+		return nil, fmt.Errorf("invalid private key: must be 64 hex characters")
+	}
+	
+	pk, err := nostr.GetPublicKey(privateKey)
+	if err != nil {
+		return nil, fmt.Errorf("invalid private key: %w", err)
+	}
 
 	relay, err := nostr.RelayConnect(context.Background(), relayURL)
 	if err != nil {
@@ -54,7 +64,7 @@ func NewDvm(relayURL string) (*Dvm, error) {
 	scraper := twitterscraper.New()
 
 	return &Dvm{
-		sk:      sk,
+		sk:      privateKey,
 		pk:      pk,
 		relay:   relay,
 		done:    make(chan struct{}),
