@@ -1,0 +1,7 @@
+# Nix build output
+result
+result-*
+
+# Direnv
+.direnv/
+.envrc.local
