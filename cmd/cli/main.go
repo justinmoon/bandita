@@ -39,6 +39,8 @@ func extractTweetID(tweetURL string) (string, error) {
 }
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: cli <tweet-url>")
 		os.Exit(1)
@@ -49,11 +51,20 @@ func main() {
 	if err != nil {
 		log.Fatalf("Error extracting tweet ID: %v", err)
 	}
+	log.Printf("Extracted tweet ID: %s from URL: %s", tweetID, tweetURL)
 
 	// Default relay if none is provided
 	relayURL := "wss://relay.damus.io"
+	
+	// Get relay from environment or command line
+	if envRelay := os.Getenv("NOSTR_RELAY"); envRelay != "" {
+		relayURL = envRelay
+		log.Printf("Using relay from environment: %s", relayURL)
+	}
+	
 	if len(os.Args) > 2 {
 		relayURL = os.Args[2]
+		log.Printf("Using relay from command line: %s", relayURL)
 	}
 
 	// Default DVM pubkey - In a real app, you'd want to get this from config
