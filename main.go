@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"log"
 	"sync"
 	"time"
 
+	"github.com/imperatrona/twitter-scraper"
 	"github.com/nbd-wtf/go-nostr"
 )
 
@@ -20,12 +22,13 @@ func generatePrivateKey() (string, error) {
 	return hex.EncodeToString(sk), nil
 }
 
-// Dvm listens for kind=42069 events, then responds with "hello world" (kind=1).
+// Dvm listens for kind=42069 events containing a tweet ID, then responds with tweet data.
 type Dvm struct {
-	sk    string
-	pk    string
-	relay *nostr.Relay
-	done  chan struct{}
+	sk      string
+	pk      string
+	relay   *nostr.Relay
+	done    chan struct{}
+	scraper *twitterscraper.Scraper
 	sync.Once // For ensuring done channel is closed only once
 }
 
@@ -41,15 +44,19 @@ func NewDvm(relayURL string) (*Dvm, error) {
 		return nil, err
 	}
 
+	// Initialize the scraper
+	scraper := twitterscraper.New()
+
 	return &Dvm{
-		sk:    sk,
-		pk:    pk,
-		relay: relay,
-		done:  make(chan struct{}),
+		sk:      sk,
+		pk:      pk,
+		relay:   relay,
+		done:    make(chan struct{}),
+		scraper: scraper,
 	}, nil
 }
 
-// Run subscribes to job requests and responds with "hello world".
+// Run subscribes to job requests and responds with tweet data.
 func (d *Dvm) Run() error {
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -74,17 +81,30 @@ func (d *Dvm) Run() error {
 		select {
 		case evt := <-sub.Events:
 			if evt.Kind == 42069 {
-				// Build response event of kind=1 with content "hello world"
+				// Get the tweet data
+				tweet, err := d.scraper.GetTweet(evt.Content)
+				if err != nil {
+					log.Printf("error getting tweet: %v", err)
+					continue
+				}
+
+				// Convert tweet to JSON
+				tweetJSON, err := json.Marshal(tweet)
+				if err != nil {
+					log.Printf("error marshaling tweet: %v", err)
+					continue
+				}
+
+				// Build response event with tweet data
 				resp := nostr.Event{
 					PubKey:    d.pk,
 					CreatedAt: nostr.Timestamp(time.Now().Unix()),
 					Kind:      1,
-					// Add tags to link this response to the request
 					Tags: nostr.Tags{
-						{"e", evt.ID},    // Reference the request event
+						{"e", evt.ID},     // Reference the request event
 						{"p", evt.PubKey}, // Reference the requester's pubkey
 					},
-					Content: "hello world",
+					Content: string(tweetJSON),
 				}
 				if err := resp.Sign(d.sk); err != nil {
 					log.Printf("dvm sign error: %v", err)
@@ -109,7 +129,7 @@ func (d *Dvm) Stop() {
 
 // ---------------------------------------------------------
 
-// DvmClient publishes a "job" event (kind=42069) and waits for the response (kind=1).
+// DvmClient publishes a tweet ID and waits for the tweet data response.
 type DvmClient struct {
 	sk    string
 	pk    string
@@ -135,18 +155,18 @@ func NewDvmClient(relayURL string) (*DvmClient, error) {
 	}, nil
 }
 
-// RequestHelloWorld publishes a job event and waits for any "kind=1" event in response.
-func (c *DvmClient) RequestHelloWorld(ctx context.Context, dvmPubKey string) (string, error) {
-	// Create the job request event first so we can get its ID
+// RequestTweet publishes a job event with a tweet ID and waits for the response.
+func (c *DvmClient) RequestTweet(ctx context.Context, dvmPubKey string, tweetID string) (*twitterscraper.Tweet, error) {
+	// Create the job request event first
 	evt := nostr.Event{
 		PubKey:    c.pk,
 		CreatedAt: nostr.Timestamp(time.Now().Unix()),
 		Kind:      42069,
 		Tags:      nostr.Tags{},
-		Content:   "",
+		Content:   tweetID,
 	}
 	if err := evt.Sign(c.sk); err != nil {
-		return "", err
+		return nil, err
 	}
 
 	// Subscribe to potential responses that reference our request
@@ -155,7 +175,7 @@ func (c *DvmClient) RequestHelloWorld(ctx context.Context, dvmPubKey string) (st
 		nostr.Filter{
 			Kinds:   []int{1},
 			Authors: []string{dvmPubKey}, // Only get responses from the DVM
-			Tags: nostr.TagMap{          // Look for responses that reference our request
+			Tags: nostr.TagMap{ // Look for responses that reference our request
 				"e": []string{evt.ID},    // Event reference
 				"p": []string{c.pk},      // Our pubkey reference
 			},
@@ -163,13 +183,13 @@ func (c *DvmClient) RequestHelloWorld(ctx context.Context, dvmPubKey string) (st
 		},
 	})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer sub.Unsub()
 
 	// Now publish the request
 	if _, err := c.relay.Publish(ctx, evt); err != nil {
-		return "", err
+		return nil, err
 	}
 
 	// Wait for a matching response
@@ -177,10 +197,14 @@ func (c *DvmClient) RequestHelloWorld(ctx context.Context, dvmPubKey string) (st
 		select {
 		case e := <-sub.Events:
 			if e.Kind == 1 {
-				return e.Content, nil
+				var tweet twitterscraper.Tweet
+				if err := json.Unmarshal([]byte(e.Content), &tweet); err != nil {
+					return nil, err
+				}
+				return &tweet, nil
 			}
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return nil, ctx.Err()
 		}
 	}
 }

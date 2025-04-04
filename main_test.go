@@ -2,13 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"sync"
 	"testing"
 	"time"
 )
 
-func TestHelloWorldDvm(t *testing.T) {
+func TestTweetDvm(t *testing.T) {
 	relayURL := "wss://relay.damus.io"
 
 	dvm, err := NewDvm(relayURL)
@@ -37,16 +38,29 @@ func TestHelloWorldDvm(t *testing.T) {
 	}
 
 	// Timeout context for waiting on a response
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, err := client.RequestHelloWorld(ctx, dvm.pk)
+	// Request the "Running bitcoin" tweet from Hal Finney
+	tweet, err := client.RequestTweet(ctx, dvm.pk, "1110302988")
 	if err != nil {
-		t.Fatalf("error requesting hello world: %v", err)
+		t.Fatalf("error requesting tweet: %v", err)
 	}
 
-	if result != "hello world" {
-		t.Fatalf("expected 'hello world', got %q", result)
+	// Pretty print the full tweet structure
+	tweetJSON, err := json.MarshalIndent(tweet, "", "  ")
+	if err != nil {
+		t.Fatalf("error marshaling tweet: %v", err)
 	}
-	t.Logf("SUCCESS: Received %q from DVM.", result)
+	t.Logf("Full tweet structure:\n%s", tweetJSON)
+
+	if tweet.Username != "halfin" {
+		t.Errorf("expected username 'halfin', got %q", tweet.Username)
+	}
+
+	if tweet.Text != "Running bitcoin" {
+		t.Errorf("expected text 'Running bitcoin', got %q", tweet.Text)
+	}
+
+	t.Logf("SUCCESS: Received tweet from @%s: %q", tweet.Username, tweet.Text)
 }
