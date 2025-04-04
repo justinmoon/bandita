@@ -7,12 +7,14 @@ import (
 	"sync"
 	"testing"
 	"time"
+	
+	"bandita/dvm"
 )
 
 func TestTweetDvm(t *testing.T) {
 	relayURL := "wss://relay.damus.io"
 
-	dvm, err := NewDvm(relayURL)
+	dvmInstance, err := dvm.NewDvm(relayURL)
 	if err != nil {
 		t.Fatalf("failed to create dvm: %v", err)
 	}
@@ -22,17 +24,17 @@ func TestTweetDvm(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := dvm.Run(); err != nil {
+		if err := dvmInstance.Run(); err != nil {
 			log.Printf("DVM run error: %v", err)
 		}
 	}()
 
 	defer func() {
-		dvm.Stop()
+		dvmInstance.Stop()
 		wg.Wait()
 	}()
 
-	client, err := NewDvmClient(relayURL)
+	client, err := dvm.NewDvmClient(relayURL)
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
@@ -42,7 +44,7 @@ func TestTweetDvm(t *testing.T) {
 	defer cancel()
 
 	// Request the "Running bitcoin" tweet from Hal Finney
-	tweet, err := client.RequestTweet(ctx, dvm.pk, "1110302988")
+	tweet, err := client.RequestTweet(ctx, dvmInstance.GetPublicKey(), "1110302988")
 	if err != nil {
 		t.Fatalf("error requesting tweet: %v", err)
 	}

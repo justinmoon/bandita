@@ -11,8 +11,8 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build
-RUN go build -o main .
+# Build the DVM server
+RUN go build -o dvm ./cmd/dvm
 
 # Run
-CMD ["./main"]
+CMD ["./dvm"]
