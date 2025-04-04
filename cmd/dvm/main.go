@@ -12,7 +12,7 @@ func main() {
 	log.Println("Starting Nostr DVM...")
 	
 	// Configure relay URL
-	relayURL := "wss://relay.damus.io"
+	relayURL := "wss://relay.nostr.net"
 	
 	// Get alternative relay from environment if available
 	if envRelay := os.Getenv("NOSTR_RELAY"); envRelay != "" {

@@ -40,7 +40,7 @@ func extractTweetID(tweetURL string) (string, error) {
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
-	
+
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: cli <tweet-url>")
 		os.Exit(1)
@@ -54,14 +54,14 @@ func main() {
 	log.Printf("Extracted tweet ID: %s from URL: %s", tweetID, tweetURL)
 
 	// Default relay if none is provided
-	relayURL := "wss://relay.damus.io"
-	
+	relayURL := "wss://relay.nostr.net"
+
 	// Get relay from environment or command line
 	if envRelay := os.Getenv("NOSTR_RELAY"); envRelay != "" {
 		relayURL = envRelay
 		log.Printf("Using relay from environment: %s", relayURL)
 	}
-	
+
 	if len(os.Args) > 2 {
 		relayURL = os.Args[2]
 		log.Printf("Using relay from command line: %s", relayURL)
@@ -69,7 +69,7 @@ func main() {
 
 	// Default DVM pubkey - In a real app, you'd want to get this from config
 	// This is a placeholder - replace with your actual DVM pubkey
-	dvmPubKey := "" // Add your DVM's pubkey here
+	dvmPubKey := "b12f6b94f0bb1b79c2aa6535a009f0d109a4228924976e3e79ef8e83ee09ecf7" // Add your DVM's pubkey here
 	if dvmPubKey == "" {
 		// Create a temporary DVM just to get its pubkey
 		tempDvm, err := dvm.NewDvm(relayURL)
@@ -102,3 +102,4 @@ func main() {
 
 	fmt.Println(string(tweetJSON))
 }
+

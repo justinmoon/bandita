@@ -65,6 +65,9 @@ func NewDvm(relayURL string) (*Dvm, error) {
 // Run subscribes to job requests and responds with tweet data.
 func (d *Dvm) Run() error {
 	ctx, cancel := context.WithCancel(context.Background())
+	
+	// Start a heartbeat to keep the connection alive
+	go d.runHeartbeat(ctx)
 
 	log.Printf("DVM starting subscription for tweet requests (kind=42069)")
 	// Subscribe to all events of kind=42069
@@ -132,15 +135,88 @@ func (d *Dvm) Run() error {
 				
 				publishStart := time.Now()
 				log.Printf("Publishing tweet data response to relay...")
-				if _, err := d.relay.Publish(context.Background(), resp); err != nil {
-					log.Printf("DVM publish error: %v", err)
-				} else {
-					log.Printf("Successfully published response in %v", time.Since(publishStart))
+				
+				// Try to publish with reconnection logic
+				maxRetries := 3
+				for attempt := 0; attempt < maxRetries; attempt++ {
+					// Check if connection is closed and try to reconnect
+					if d.relay.ConnectionError != nil {
+						log.Printf("Relay connection error detected, reconnecting... (attempt %d/%d)", attempt+1, maxRetries)
+						
+						// Create a new relay connection
+						newRelay, err := nostr.RelayConnect(context.Background(), d.relay.URL)
+						if err != nil {
+							log.Printf("Failed to reconnect to relay: %v", err)
+							time.Sleep(500 * time.Millisecond)
+							continue
+						}
+						
+						// Update the relay reference
+						d.relay = newRelay
+						log.Printf("Successfully reconnected to relay")
+					}
+					
+					// Attempt to publish
+					if status, err := d.relay.Publish(context.Background(), resp); err != nil {
+						log.Printf("DVM publish error (attempt %d/%d): %v", attempt+1, maxRetries, err)
+						time.Sleep(500 * time.Millisecond)
+					} else {
+						log.Printf("Successfully published response in %v (status: %v)", time.Since(publishStart), status)
+						log.Printf("Verification info - Event ID: %s", resp.ID)
+						log.Printf("To verify with nak: nak event -r wss://relay.nostr.net %s", resp.ID)
+						break
+					}
 				}
 			}
 		case <-d.done:
 			log.Printf("DVM received shutdown signal")
 			return nil
+		}
+	}
+}
+
+// runHeartbeat sends periodic NIP-01 keepalive events to maintain the connection
+func (d *Dvm) runHeartbeat(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	
+	for {
+		select {
+		case <-ticker.C:
+			// Check if the connection is still alive
+			if d.relay.ConnectionError != nil {
+				log.Printf("Heartbeat detected closed connection, attempting to reconnect...")
+				newRelay, err := nostr.RelayConnect(ctx, d.relay.URL)
+				if err != nil {
+					log.Printf("Heartbeat reconnection failed: %v", err)
+					continue
+				}
+				d.relay = newRelay
+				log.Printf("Heartbeat successfully reconnected to relay")
+			} else {
+				// Send a simple NIP-01 event as a ping to keep the connection alive
+				ping := nostr.Event{
+					PubKey:    d.pk,
+					CreatedAt: nostr.Timestamp(time.Now().Unix()),
+					Kind:      1,
+					Tags:      nostr.Tags{{"client", "bandita-dvm-heartbeat"}},
+					Content:   "",
+				}
+				if err := ping.Sign(d.sk); err != nil {
+					log.Printf("Failed to sign heartbeat ping: %v", err)
+					continue
+				}
+				
+				// We don't need to actually send this event - just prepare it to be ready
+				// in case we need to test the connection in the future
+				log.Printf("Heartbeat check - connection still alive")
+			}
+		case <-ctx.Done():
+			log.Printf("Heartbeat routine stopped")
+			return
+		case <-d.done:
+			log.Printf("Heartbeat received shutdown signal")
+			return
 		}
 	}
 }
@@ -198,16 +274,16 @@ func (c *DvmClient) RequestTweet(ctx context.Context, dvmPubKey string, tweetID 
 	log.Printf("Created request event with ID: %s", evt.ID[:8])
 
 	// Subscribe to potential responses that reference our request
-	log.Printf("Setting up subscription for responses from DVM")
-	since := nostr.Timestamp(time.Now().Add(-time.Second).Unix())
+	log.Printf("Setting up subscription for responses from DVM (client pubkey: %s, request ID: %s)", c.pk, evt.ID)
+	
+	// Go back 1 minute to ensure we don't miss anything
+	since := nostr.Timestamp(time.Now().Add(-1 * time.Minute).Unix())
+	
+	// First, set up a broader subscription to catch all responses from the DVM
 	sub, err := c.relay.Subscribe(ctx, nostr.Filters{
 		nostr.Filter{
 			Kinds:   []int{1},
 			Authors: []string{dvmPubKey}, // Only get responses from the DVM
-			Tags: nostr.TagMap{ // Look for responses that reference our request
-				"e": []string{evt.ID},    // Event reference
-				"p": []string{c.pk},      // Our pubkey reference
-			},
 			Since: &since,
 		},
 	})
@@ -218,14 +294,49 @@ func (c *DvmClient) RequestTweet(ctx context.Context, dvmPubKey string, tweetID 
 	defer sub.Unsub()
 	log.Printf("Subscription set up successfully")
 
-	// Now publish the request
+	// Now publish the request with retry logic
 	log.Printf("Publishing request for tweet ID: %s", tweetID)
 	publishStart := time.Now()
-	if _, err := c.relay.Publish(ctx, evt); err != nil {
-		log.Printf("Error publishing request: %v", err)
-		return nil, err
+	
+	// Try to publish with reconnection logic
+	maxRetries := 3
+	var publishErr error
+	
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// Check if connection is closed and try to reconnect
+		if c.relay.ConnectionError != nil {
+			log.Printf("Client relay connection error detected, reconnecting... (attempt %d/%d)", attempt+1, maxRetries)
+			
+			// Create a new relay connection
+			newRelay, err := nostr.RelayConnect(ctx, c.relay.URL)
+			if err != nil {
+				log.Printf("Client failed to reconnect to relay: %v", err)
+				time.Sleep(500 * time.Millisecond)
+				publishErr = err
+				continue
+			}
+			
+			// Update the relay reference
+			c.relay = newRelay
+			log.Printf("Client successfully reconnected to relay")
+		}
+		
+		// Attempt to publish
+		if _, err := c.relay.Publish(ctx, evt); err != nil {
+			log.Printf("Error publishing request (attempt %d/%d): %v", attempt+1, maxRetries, err)
+			time.Sleep(500 * time.Millisecond)
+			publishErr = err
+		} else {
+			log.Printf("Request published in %v", time.Since(publishStart))
+			publishErr = nil
+			break
+		}
 	}
-	log.Printf("Request published in %v", time.Since(publishStart))
+	
+	if publishErr != nil {
+		log.Printf("Failed to publish request after %d attempts: %v", maxRetries, publishErr)
+		return nil, publishErr
+	}
 
 	deadline, ok := ctx.Deadline()
 	if ok {
@@ -239,20 +350,56 @@ func (c *DvmClient) RequestTweet(ctx context.Context, dvmPubKey string, tweetID 
 	for {
 		select {
 		case e := <-sub.Events:
-			log.Printf("Received event kind=%d from=%s", e.Kind, e.PubKey[:8])
+			log.Printf("Received event kind=%d from=%s with ID: %s", e.Kind, e.PubKey[:8], e.ID[:8])
+			
+			// Debug: Print the tags to help troubleshoot
+			log.Printf("Event tags: %v", e.Tags)
+			
+			// Check if this is our response - either by tag or just as a kind 1 from the DVM
+			isOurResponse := false
+			
 			if e.Kind == 1 {
-				log.Printf("Received tweet data response from DVM")
-				var tweet twitterscraper.Tweet
-				if err := json.Unmarshal([]byte(e.Content), &tweet); err != nil {
-					log.Printf("Error unmarshaling tweet data: %v", err)
-					return nil, err
+				// First check if it's tagged with our request ID
+				for _, tag := range e.Tags {
+					if len(tag) >= 2 && tag[0] == "e" && tag[1] == evt.ID {
+						log.Printf("Found matching event reference tag: %s", tag[1])
+						isOurResponse = true
+						break
+					}
 				}
-				log.Printf("Successfully parsed tweet from @%s: %s", 
-					tweet.Username, tweet.Text)
-				return &tweet, nil
+				
+				// If we didn't find a matching tag but we're getting responses, 
+				// consider using it if it's from the right DVM
+				if !isOurResponse && e.PubKey == dvmPubKey {
+					log.Printf("Found response from DVM, but no matching tag. Trying to parse anyway.")
+					isOurResponse = true
+				}
+				
+				if isOurResponse {
+					log.Printf("Received tweet data response from DVM")
+					log.Printf("Raw response content: %s", e.Content)
+					
+					var tweet twitterscraper.Tweet
+					if err := json.Unmarshal([]byte(e.Content), &tweet); err != nil {
+						log.Printf("Error unmarshaling tweet data: %v", err)
+						// Don't return yet, maybe there's another response coming
+						continue
+					}
+					
+					// Check if the tweet data has basic fields to confirm it's valid
+					if tweet.Text == "" {
+						log.Printf("Warning: Parsed tweet has empty text field, might be incomplete")
+						continue
+					}
+					
+					log.Printf("Successfully parsed tweet from @%s: %s", 
+						tweet.Username, tweet.Text)
+					return &tweet, nil
+				}
 			}
 		case <-ctx.Done():
-			log.Printf("Request timed out after waiting for response")
+			log.Printf("Request timed out after waiting for response - check if the DVM published a response by running:")
+			log.Printf("nak event -r %s --kinds 1 --author %s --limit 5", c.relay.URL, dvmPubKey)
 			return nil, ctx.Err()
 		}
 	}

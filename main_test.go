@@ -12,7 +12,7 @@ import (
 )
 
 func TestTweetDvm(t *testing.T) {
-	relayURL := "wss://relay.damus.io"
+	relayURL := "wss://relay.nostr.net"
 
 	dvmInstance, err := dvm.NewDvm(relayURL)
 	if err != nil {
